@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"yourmodule/internal/domain"
-	"yourmodule/internal/repository"
+	"the_scrapper/internal/domain"
+	"the_scrapper/internal/repository"
 )
 
 type SearchService struct {

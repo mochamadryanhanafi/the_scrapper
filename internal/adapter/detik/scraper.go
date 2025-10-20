@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"yourmodule/internal/domain"
+	"the_scrapper/internal/domain"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -22,8 +22,8 @@ func NewDetikScraper(client *http.Client) *DetikScraper {
 }
 
 func (d *DetikScraper) Search(ctx context.Context, query string, from, to time.Time) ([]domain.Article, error) {
-	fromStr := from.Format("02/01/2006")
-	toStr := to.Format("02/01/2006")
+	fromStr := from.Format("03/01/2015")
+	toStr := to.Format("03/01/2015")
 
 	params := url.Values{}
 	params.Set("query", query)
@@ -56,7 +56,6 @@ func (d *DetikScraper) Search(ctx context.Context, query string, from, to time.T
 	}
 
 	var articles []domain.Article
-
 	doc.Find("article").Each(func(i int, s *goquery.Selection) {
 		title := strings.TrimSpace(s.Find("h3").Text())
 		link, _ := s.Find("a").Attr("href")
@@ -71,11 +70,9 @@ func (d *DetikScraper) Search(ctx context.Context, query string, from, to time.T
 		}
 	})
 
-	// 🔥 Ambil isi berita tiap artikel
 	for i, a := range articles {
 		content, err := d.scrapeArticleContent(ctx, a.URL)
 		if err != nil {
-			// Abaikan error, lanjut ke artikel lain
 			fmt.Printf("[warn] gagal ambil konten %s: %v\n", a.URL, err)
 			continue
 		}
@@ -85,7 +82,6 @@ func (d *DetikScraper) Search(ctx context.Context, query string, from, to time.T
 	return articles, nil
 }
 
-// 🔎 Fungsi untuk ambil isi berita dari halaman artikel
 func (d *DetikScraper) scrapeArticleContent(ctx context.Context, articleURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, articleURL, nil)
 	if err != nil {
@@ -109,14 +105,9 @@ func (d *DetikScraper) scrapeArticleContent(ctx context.Context, articleURL stri
 		return "", err
 	}
 
-	// Selector umum untuk isi berita Detik
-	content := doc.Find("div.detail__body-text").Text()
-	content = strings.TrimSpace(content)
-
-	// Jika tidak ditemukan, coba selector alternatif
+	content := strings.TrimSpace(doc.Find("div.detail__body-text").Text())
 	if content == "" {
-		content = doc.Find("div.detail__body").Text()
-		content = strings.TrimSpace(content)
+		content = strings.TrimSpace(doc.Find("div.detail__body").Text())
 	}
 
 	return content, nil

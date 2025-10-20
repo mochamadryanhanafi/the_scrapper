@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"yourmodule/internal/domain"
+	"the_scrapper/internal/domain"
 )
 
 type Scraper interface {
