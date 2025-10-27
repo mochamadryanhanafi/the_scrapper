@@ -13,7 +13,8 @@ import (
 
 	"the_scrapper/internal/adapter/detik"
 	"the_scrapper/internal/adapter/httpclient"
-	"the_scrapper/internal/adapter/kompas" // Adapter baru
+	"the_scrapper/internal/adapter/kompas"
+	"the_scrapper/internal/adapter/liputan6"
 	"the_scrapper/internal/domain"
 	"the_scrapper/internal/repository"
 	"the_scrapper/internal/usecase"
@@ -21,10 +22,10 @@ import (
 
 // ScrapeRequest mendefinisikan body JSON untuk request API
 type ScrapeRequest struct {
-	Source    string `json:"source"`     // "detik" atau "kompas"
-	Query     string `json:"query"`      // Topik pencarian
-	StartDate string `json:"start_date"` // Format "YYYY-MM-DD"
-	EndDate   string `json:"end_date"`   // Format "YYYY-MM-DD"
+	Source    string `json:"source"`
+	Query     string `json:"query"`
+	StartDate string `json:"start_date"`
+	EndDate   string `json:"end_date"`
 }
 
 // ScrapeHandler mengelola dependensi untuk handler API
@@ -39,8 +40,9 @@ func NewScrapeHandler(db *mongo.Database) *ScrapeHandler {
 
 	// Pabrik ini memetakan nama source ke implementasi scraper-nya
 	factory := map[string]repository.Scraper{
-		"detik":  detik.NewDetikScraper(httpClient),
-		"kompas": kompas.NewKompasScraper(httpClient), // Implementasi Kompas
+		"detik":    detik.NewDetikScraper(httpClient),
+		"kompas":   kompas.NewKompasScraper(httpClient),
+		"liputan6": liputan6.NewLiputan6Scraper(httpClient),
 	}
 
 	return &ScrapeHandler{
@@ -65,7 +67,7 @@ func (h *ScrapeHandler) HandleScrape(w http.ResponseWriter, r *http.Request) {
 	// 1. Validasi Source
 	scraper, ok := h.scraperFactory[req.Source]
 	if !ok {
-		http.Error(w, "Invalid source. Must be 'detik' or 'kompas'", http.StatusBadRequest)
+		http.Error(w, "Invalid source. Must be 'detik', 'kompas', or 'liputan6'", http.StatusBadRequest)
 		return
 	}
 
