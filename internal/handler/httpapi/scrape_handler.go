@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -41,7 +40,7 @@ func NewScrapeHandler(db *mongo.Database) *ScrapeHandler {
 	// Pabrik ini memetakan nama source ke implementasi scraper-nya
 	factory := map[string]repository.Scraper{
 		"detik":  detik.NewDetikScraper(httpClient),
-		"kompas": kompas.NewKompasScraper(httpClient), // Tambahkan placeholder Kompas
+		"kompas": kompas.NewKompasScraper(httpClient), // Implementasi Kompas
 	}
 
 	return &ScrapeHandler{
@@ -88,13 +87,13 @@ func (h *ScrapeHandler) HandleScrape(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dapatkan nama koleksi dari .env
-	collectionName := os.Getenv("COLLECTION_NAME")
-	if collectionName == "" {
-		log.Println("⚠️  COLLECTION_NAME tidak diatur di .env, menggunakan 'articles' sebagai default.")
-		collectionName = "articles"
-	}
+	// --- PERBAIKAN ---
+	// Dapatkan nama koleksi secara dinamis berdasarkan sumber (source)
+	// Ini akan membuat koleksi seperti "detik_articles" dan "kompas_articles"
+	// alih-alih menyimpan semuanya di satu tempat.
+	collectionName := fmt.Sprintf("%s_articles", req.Source)
 	collection := h.db.Collection(collectionName)
+	// --- AKHIR PERBAIKAN ---
 
 	// 4. Eksekusi Usecase
 	service := usecase.NewSearchService(scraper)
@@ -103,18 +102,13 @@ func (h *ScrapeHandler) HandleScrape(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	log.Printf("🚀 Memulai scraping: Source=%s, Query=%s, Range=%s to %s",
-		req.Source, req.Query, req.StartDate, req.EndDate)
+	log.Printf("🚀 Memulai scraping: Source=%s, Query=%s, Range=%s to %s, Collection=%s",
+		req.Source, req.Query, req.StartDate, req.EndDate, collectionName)
 
 	// API akan scrape seluruh rentang tanggal sekaligus (bukan per hari)
 	articles, err := service.Execute(ctx, req.Query, startDate, endDate)
 	if err != nil {
 		log.Printf("❌ Gagal scraping: %v", err)
-		// Tangani error khusus jika scraper belum diimplementasi
-		if err.Error() == "Kompas scraper not implemented" {
-			http.Error(w, "Kompas scraper is not yet implemented", http.StatusNotImplemented)
-			return
-		}
 		http.Error(w, fmt.Sprintf("Scraping failed: %v", err), http.StatusInternalServerError)
 		return
 	}

@@ -11,8 +11,8 @@ import (
 	mongoDriver "go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"the_scrapper/internal/adapter/detik"
 	"the_scrapper/internal/adapter/httpclient"
+	"the_scrapper/internal/adapter/kompas"
 	mongoAdapter "the_scrapper/internal/adapter/mongo"
 	"the_scrapper/internal/domain"
 	"the_scrapper/internal/usecase"
@@ -44,7 +44,7 @@ func main() {
 
 	// === Inisialisasi HTTP Client dan Scraper ===
 	httpClient := httpclient.NewHTTPClient()
-	scraper := detik.NewDetikScraper(httpClient)
+	scraper := kompas.NewKompasScraper(httpClient)
 	service := usecase.NewSearchService(scraper)
 
 	// === Koneksi MongoDB ===

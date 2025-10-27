@@ -3,33 +3,41 @@ package kompas
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strings"
 	"time"
 
-	"the_scrapper/internal/domain"
-
 	"github.com/PuerkitoBio/goquery"
+	"github.com/chromedp/chromedp"
+
+	"the_scrapper/internal/domain"
 )
 
-// KompasScraper adalah implementasi untuk Kompas
 type KompasScraper struct {
 	client *http.Client
 }
 
-// NewKompasScraper membuat instance scraper Kompas baru
 func NewKompasScraper(client *http.Client) *KompasScraper {
 	return &KompasScraper{client: client}
 }
 
-// Search mengimplementasikan logika scraping untuk search.kompas.com
+func findFirstExecutable(executables ...string) string {
+	for _, executable := range executables {
+		path, err := exec.LookPath(executable)
+		if err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
 func (k *KompasScraper) Search(ctx context.Context, query string, from, to time.Time) ([]domain.Article, error) {
-	// Format tanggal sesuai URL: YYYY-MM-DD
 	fromStr := from.Format("2006-01-02")
 	toStr := to.Format("2006-01-02")
 
-	// Buat parameter URL
 	params := url.Values{}
 	params.Set("q", query)
 	params.Set("site_id", "all")
@@ -38,39 +46,42 @@ func (k *KompasScraper) Search(ctx context.Context, query string, from, to time.
 
 	urlSearch := fmt.Sprintf("https://search.kompas.com/search?%s", params.Encode())
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlSearch, nil)
+	opts := chromedp.DefaultExecAllocatorOptions[:]
+	opts = append(opts, chromedp.Flag("headless", true))
+
+	if execPath := findFirstExecutable("brave", "brave-browser", "chromium-browser"); execPath != "" {
+		opts = append(opts, chromedp.ExecPath(execPath))
+	}
+
+	allocCtx, cancel := chromedp.NewExecAllocator(ctx, opts...)
+	defer cancel()
+
+	taskCtx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
+	defer cancel()
+
+	var htmlBody string
+	err := chromedp.Run(taskCtx,
+		chromedp.Navigate(urlSearch),
+		chromedp.WaitVisible("div.gsc-webResult", chromedp.ByQuery),
+		chromedp.OuterHTML("body", &htmlBody),
+	)
+
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("chromedp failed to execute search task: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; ScraperBot/1.0; +http://yourwebsite.com/bot)")
-
-	resp, err := k.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("gagal mengambil halaman pencarian kompas: status %d", resp.StatusCode)
-	}
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlBody))
 	if err != nil {
 		return nil, err
 	}
 
 	var articles []domain.Article
 
-	// --- PERUBAHAN ---
-	// Selector diperbarui untuk mencocokkan struktur Google Custom Search (gsc)
-	// yang digunakan oleh Kompas.
 	doc.Find("div.gsc-webResult").Each(func(i int, s *goquery.Selection) {
 		titleEl := s.Find("a.gs-title")
 		title := strings.TrimSpace(titleEl.Text())
-		link, _ := titleEl.Attr("href") // URL artikel
+		link, _ := titleEl.Attr("href")
 
-		// Mengambil ringkasan/snippet
 		summary := strings.TrimSpace(s.Find("div.gs-bidi-start-align").Text())
 
 		if title != "" && link != "" {
@@ -81,21 +92,19 @@ func (k *KompasScraper) Search(ctx context.Context, query string, from, to time.
 			})
 		}
 	})
-	// --- AKHIR PERUBAHAN ---
 
 	if len(articles) == 0 {
-		return []domain.Article{}, nil // Tidak ada artikel ditemukan, tapi bukan error
+		log.Println("[INFO] kompas: No articles found after chromedp execution.")
+		return []domain.Article{}, nil
 	}
 
-	// Ambil konten lengkap untuk setiap artikel
 	for i, a := range articles {
-		// Beri sedikit jeda agar tidak membanjiri server Kompas
 		time.Sleep(300 * time.Millisecond)
 
-		content, err := k.scrapeArticleContent(ctx, a.URL)
+		content, err := k.scrapeArticleContent(taskCtx, a.URL)
 		if err != nil {
-			fmt.Printf("[warn] kompas: gagal ambil konten %s: %v\n", a.URL, err)
-			continue // Lanjut ke artikel berikutnya, konten akan kosong
+			fmt.Printf("[warn] kompas: failed to fetch content for %s: %v\n", a.URL, err)
+			continue
 		}
 		articles[i].Content = content
 	}
@@ -103,59 +112,60 @@ func (k *KompasScraper) Search(ctx context.Context, query string, from, to time.
 	return articles, nil
 }
 
-// scrapeArticleContent mengambil konten teks dari halaman artikel Kompas
 func (k *KompasScraper) scrapeArticleContent(ctx context.Context, articleURL string) (string, error) {
 	if strings.Contains(articleURL, "video.kompas.com") || strings.Contains(articleURL, "foto.kompas.com") {
-		return "", fmt.Errorf("link adalah video/foto, bukan artikel teks")
+		return "", fmt.Errorf("link is a video/photo, not a text article")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, articleURL, nil)
+	opts := chromedp.DefaultExecAllocatorOptions[:]
+	opts = append(opts, chromedp.Flag("headless", true))
+
+	if execPath := findFirstExecutable("brave", "brave-browser", "chromium-browser"); execPath != "" {
+		opts = append(opts, chromedp.ExecPath(execPath))
+	}
+
+	allocCtx, cancel := chromedp.NewExecAllocator(ctx, opts...)
+	defer cancel()
+
+	taskCtx, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	var contentHTML string
+	err := chromedp.Run(taskCtx,
+		chromedp.Navigate(articleURL),
+		chromedp.WaitVisible("div.read__content", chromedp.ByQuery),
+		chromedp.OuterHTML("div.read__content", &contentHTML, chromedp.ByQuery),
+	)
+
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("chromedp failed to retrieve article content: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; ScraperBot/1.0)")
+	if contentHTML == "" {
+		return "", fmt.Errorf("article content is empty (selector 'div.read__content' not found by chromedp)")
+	}
 
-	resp, err := k.client.Do(req)
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(contentHTML))
 	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("gagal mengambil artikel: status %d", resp.StatusCode)
+		return "", fmt.Errorf("failed to parse article content HTML: %w", err)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	// --- PERUBAHAN ---
-	// Selector untuk konten artikel diperbarui dan dibuat lebih tangguh
-	// dengan menggabungkan paragraf dan membersihkan "Baca juga:".
-
-	contentContainer := doc.Find("div.read__content")
-
-	// Hapus elemen yang tidak diinginkan seperti "Baca juga"
-	contentContainer.Find("strong:contains('Baca juga:')").Each(func(i int, s *goquery.Selection) {
-		s.Parent().Remove() // Hapus <p> yang berisi "Baca juga"
+	doc.Find("strong:contains('Baca juga:')").Each(func(i int, s *goquery.Selection) {
+		s.Parent().Remove()
 	})
-	contentContainer.Find("strong:contains('Baca juga :')").Each(func(i int, s *goquery.Selection) {
+	doc.Find("strong:contains('Baca juga :')").Each(func(i int, s *goquery.Selection) {
 		s.Parent().Remove()
 	})
 
-	// Gabungkan teks dari semua tag <p> di dalam div konten
 	var contentBuilder strings.Builder
-	contentContainer.Find("p").Each(func(i int, s *goquery.Selection) {
+	doc.Find("p").Each(func(i int, s *goquery.Selection) {
 		contentBuilder.WriteString(strings.TrimSpace(s.Text()) + "\n")
 	})
 
 	content := strings.TrimSpace(contentBuilder.String())
-	// --- AKHIR PERUBAHAN ---
 
 	if content == "" {
-		return "", fmt.Errorf("tidak dapat menemukan konten artikel (selector 'div.read__content' tidak cocok atau kosong)")
+		return "", fmt.Errorf("could not find article content text after goquery parsing")
 	}
 
 	return content, nil
